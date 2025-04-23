@@ -1,2 +1,13 @@
-# Data files
-data/*.csv
+# Directories
+logs/
+__pycache__/
+
+# Python files
+*.pyc
+*.py[cod]
+*$py.class
+.coverage
+coverage.xml
+
+# Generated files
+data/case5.m
