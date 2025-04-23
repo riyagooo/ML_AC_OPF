@@ -1,0 +1,28 @@
+experiment_name: case5_gnn
+log_dir: logs
+
+model:
+  type: gnn
+  hidden_dims: [64]
+  num_layers: 3
+  dropout_rate: 0.1
+
+training:
+  batch_size: 16
+  learning_rate: 0.001
+  epochs: 10
+  early_stopping: 5
+  optimizer: adam
+  criterion: mse
+  validation_split: 0.1
+  use_wandb: false
+  seed: 42
+
+data:
+  case: case5
+  data_dir: data
+  test_size: 0.1
+  cv_folds: 5
+  use_augmentation: false
+  normalize_inputs: true
+  normalize_outputs: true 
