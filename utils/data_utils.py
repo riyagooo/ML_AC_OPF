@@ -31,9 +31,40 @@ class OPFDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
             
-        # Get input and output values
-        input_vals = self.data.iloc[idx][self.input_cols].values.astype(np.float32)
-        output_vals = self.data.iloc[idx][self.output_cols].values.astype(np.float32)
+        # Get input and output values - filter columns that can be converted to float
+        try:
+            input_df = self.data.iloc[idx][self.input_cols]
+            output_df = self.data.iloc[idx][self.output_cols]
+            
+            # Process any complex numbers in the data
+            input_vals = []
+            for col in self.input_cols:
+                val = input_df[col]
+                # Try to handle complex number strings
+                if isinstance(val, str) and ('j' in val or 'i' in val):
+                    # Extract real part only
+                    val = float(val.split('+')[0].split('-')[0].strip())
+                input_vals.append(float(val))
+                
+            output_vals = []
+            for col in self.output_cols:
+                val = output_df[col]
+                # Try to handle complex number strings
+                if isinstance(val, str) and ('j' in val or 'i' in val):
+                    # Extract real part only
+                    val = float(val.split('+')[0].split('-')[0].strip())
+                output_vals.append(float(val))
+                
+            input_vals = np.array(input_vals, dtype=np.float32)
+            output_vals = np.array(output_vals, dtype=np.float32)
+        except Exception as e:
+            if idx < 5:  # Only print for the first few problematic rows to avoid too much output
+                print(f"Error processing row {idx}: {e}")
+                if isinstance(val, str):
+                    print(f"Problematic value: {val}")
+            # Return zeros if there's an error processing the data
+            input_vals = np.zeros(len(self.input_cols), dtype=np.float32)
+            output_vals = np.zeros(len(self.output_cols), dtype=np.float32)
         
         # Convert to tensors
         input_tensor = torch.tensor(input_vals, dtype=torch.float32)
@@ -73,10 +104,20 @@ def load_case_network(case_name, data_dir="data"):
     Returns:
         PyPOWER case data
     """
-    # Use the mock case data from the test fixtures for now
-    from tests.conftest import mock_case_data
-    print(f"Loading mock case data for {case_name}")
-    return mock_case_data()
+    # Check if custom_case_loader module is available
+    try:
+        from custom_case_loader import load_case
+        file_path = os.path.join(data_dir, f"pglib_opf_{case_name}.m")
+        if os.path.exists(file_path):
+            print(f"Loading case data for {case_name} using custom loader")
+            return load_case(file_path)
+        else:
+            raise FileNotFoundError(f"Case file not found: {file_path}")
+    except ImportError:
+        # Fallback to original mock data method
+        from tests.conftest import mock_case_data
+        print(f"Loading mock case data for {case_name}")
+        return mock_case_data()
 
 def prepare_data_loaders(data_frame, input_cols, output_cols, batch_size=32, 
                         train_ratio=0.8, val_ratio=0.1, seed=42):

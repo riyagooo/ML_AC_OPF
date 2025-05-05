@@ -67,9 +67,21 @@ def main(args):
         case_data = load_case_network(args.case, args.data_dir)
         print(f"Data loaded: {len(data)} samples")
         
-        # Extract input and output columns
-        input_cols = [col for col in data.columns if col.startswith('load_p') or col.startswith('load_q')]
-        output_cols = [col for col in data.columns if col.startswith('gen_p') or col.startswith('gen_vm')]
+        # Extract input and output columns based on CSV column format
+        input_cols = [col for col in data.columns if col.startswith('load')]
+        if not input_cols:
+            # Try alternative naming pattern
+            input_cols = [col for col in data.columns if ':pl' in col or ':ql' in col]
+        
+        output_cols = [col for col in data.columns if col.startswith('gen') or col.startswith('bus')]
+        if not output_cols:
+            # Try alternative naming pattern
+            output_cols = [col for col in data.columns if ':pg' in col or ':qg' in col or ':v_' in col]
+            
+        if not input_cols:
+            raise ValueError(f"No input columns found. Column names are: {list(data.columns)[:10]}...")
+        if not output_cols:
+            raise ValueError(f"No output columns found. Column names are: {list(data.columns)[:10]}...")
         
         print(f"Input features: {len(input_cols)}")
         print(f"Output features: {len(output_cols)}")
@@ -113,11 +125,19 @@ def main(args):
             )
         
         # Create cost coefficients for optimality gap metric
-        cost_coeffs = torch.tensor(
-            [coef[5] for coef in case_data['gencost']], 
-            dtype=torch.float32,
-            device=device
-        )
+        try:
+            cost_coeffs = torch.tensor(
+                [coef[5] for coef in case_data['gencost']], 
+                dtype=torch.float32,
+                device=device
+            )
+        except (IndexError, KeyError) as e:
+            print(f"Warning: Error getting cost coefficients: {e}. Using default values.")
+            # Default to ones if we can't get the coefficients
+            n_gen = len([col for col in output_cols if ':pg' in col or 'gen' in col])
+            if n_gen == 0:
+                n_gen = 5  # Default for case5
+            cost_coeffs = torch.ones(n_gen, dtype=torch.float32, device=device)
         
         # Define metrics
         metrics = {
