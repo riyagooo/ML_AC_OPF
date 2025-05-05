@@ -58,8 +58,8 @@ ML_OPF_Project/
 pip install ml-opf
 
 # Install from source with development dependencies
-git clone https://github.com/yourusername/ML-OPF-Project.git
-cd ML-OPF-Project
+git clone https://github.com/riyagooo/ML_AC_OPF.git
+cd ML_AC_OPF
 pip install -e ".[dev]"
 ```
 
