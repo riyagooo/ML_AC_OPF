@@ -1,0 +1,41 @@
+experiment_name: case30_local
+log_dir: logs
+
+model:
+  type: feedforward
+  hidden_dims: [128, 256, 128]
+  dropout_rate: 0.1
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  epochs: 15
+  early_stopping: 5
+  optimizer: adam
+  criterion: mse
+  validation_split: 0.1
+  use_wandb: false
+  seed: 42
+
+data:
+  case: case30
+  data_dir: data
+  test_size: 0.1
+  cv_folds: 5
+  use_augmentation: false
+  normalize_inputs: true
+  normalize_outputs: true
+
+optimization:
+  solver: gurobi  # Using local Gurobi license
+  fallback_solver: pypower  # Fallback if needed
+  max_time: 1800  # 30 minutes max solver time
+  threads: 8  # Adjust based on your CPU
+  numeric_focus: 3  # Maximum numerical precision
+  method: 1  # Dual simplex (typically more reliable)
+
+hardware:
+  device: cpu  # Use CPU for local execution
+  precision: float32
+  threads: 8
+  optimize_memory: true

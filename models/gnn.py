@@ -70,6 +70,7 @@ class TopologyAwareGNN(nn.Module):
                 - x: Node features
                 - edge_index: Graph connectivity
                 - edge_attr: Edge features
+                - batch: Batch indices for multiple graphs
         
         Returns:
             Predictions for the requested output values
@@ -84,8 +85,14 @@ class TopologyAwareGNN(nn.Module):
             x = conv(x, edge_index)
             x = self.dropout(x)
         
-        # Global pooling (mean of all node embeddings)
-        x = torch.mean(x, dim=0)
+        # Handle batched data - use global_mean_pool if batch is provided
+        if hasattr(data, 'batch') and data.batch is not None:
+            # Import global_mean_pool for batched graphs
+            from torch_geometric.nn import global_mean_pool
+            x = global_mean_pool(x, data.batch)
+        else:
+            # For single graph, just take mean of all nodes
+            x = torch.mean(x, dim=0, keepdim=True)
         
         # Final prediction layers
         x = F.relu(self.fc1(x))
@@ -95,6 +102,23 @@ class TopologyAwareGNN(nn.Module):
         # Apply bounds if provided
         if self.output_bounds is not None:
             min_vals, max_vals = self.output_bounds
+            
+            # Check if dimensions match
+            if min_vals.size(0) != self.output_dim or max_vals.size(0) != self.output_dim:
+                print(f"Warning: Output bounds dimensions ({min_vals.size(0)},{max_vals.size(0)}) " + 
+                      f"don't match output dimensions ({self.output_dim}). Adjusting.")
+                
+                if x.size(-1) < min_vals.size(0):
+                    # Resize bounds to match output dimensions
+                    min_vals = min_vals[:x.size(-1)]
+                    max_vals = max_vals[:x.size(-1)]
+                else:
+                    # Pad bounds if output is larger
+                    pad_size = x.size(-1) - min_vals.size(0)
+                    if pad_size > 0:
+                        device = min_vals.device
+                        min_vals = torch.cat([min_vals, torch.zeros(pad_size, device=device)])
+                        max_vals = torch.cat([max_vals, torch.ones(pad_size, device=device)])
             
             # Apply sigmoid and scale to bounds
             x = torch.sigmoid(x)
@@ -188,6 +212,23 @@ class HybridGNN(nn.Module):
         # Apply bounds if provided
         if self.output_bounds is not None:
             min_vals, max_vals = self.output_bounds
+            
+            # Check if dimensions match
+            if min_vals.size(0) != self.output_dim or max_vals.size(0) != self.output_dim:
+                print(f"Warning: Output bounds dimensions ({min_vals.size(0)},{max_vals.size(0)}) " + 
+                      f"don't match output dimensions ({self.output_dim}). Adjusting.")
+                
+                if x.size(-1) < min_vals.size(0):
+                    # Resize bounds to match output dimensions
+                    min_vals = min_vals[:x.size(-1)]
+                    max_vals = max_vals[:x.size(-1)]
+                else:
+                    # Pad bounds if output is larger
+                    pad_size = x.size(-1) - min_vals.size(0)
+                    if pad_size > 0:
+                        device = min_vals.device
+                        min_vals = torch.cat([min_vals, torch.zeros(pad_size, device=device)])
+                        max_vals = torch.cat([max_vals, torch.ones(pad_size, device=device)])
             
             # Apply sigmoid and scale to bounds
             x = torch.sigmoid(x)

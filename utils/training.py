@@ -289,24 +289,56 @@ class Trainer:
         axes[0].legend()
         axes[0].grid(True)
         
+        # Set appropriate y-axis limits for loss (add some padding)
+        if self.history['train_loss'] and self.history['val_loss']:
+            all_losses = self.history['train_loss'] + self.history['val_loss']
+            min_loss = min(all_losses)
+            max_loss = max(all_losses)
+            padding = (max_loss - min_loss) * 0.1  # 10% padding
+            axes[0].set_ylim([min_loss - padding, max_loss + padding])
+        
         # Plot metrics
         if metrics:
             for i, metric_name in enumerate(metrics):
                 if metric_name in self.history['train_metrics'] and metric_name in self.history['val_metrics']:
-                    axes[i+1].plot(self.history['train_metrics'][metric_name], label=f'Training {metric_name}')
-                    axes[i+1].plot(self.history['val_metrics'][metric_name], label=f'Validation {metric_name}')
+                    train_metric = self.history['train_metrics'][metric_name]
+                    val_metric = self.history['val_metrics'][metric_name]
+                    
+                    axes[i+1].plot(train_metric, label=f'Training {metric_name}')
+                    axes[i+1].plot(val_metric, label=f'Validation {metric_name}')
                     axes[i+1].set_xlabel('Epoch')
                     axes[i+1].set_ylabel(metric_name)
                     axes[i+1].set_title(f'{metric_name} vs. Epoch')
                     axes[i+1].legend()
                     axes[i+1].grid(True)
+                    
+                    # Set appropriate y-axis limits for the metric
+                    all_metrics = train_metric + val_metric
+                    if all_metrics:
+                        min_metric = min(all_metrics)
+                        max_metric = max(all_metrics)
+                        
+                        # If all values are close to each other, expand the range
+                        if max_metric - min_metric < 1e-6:
+                            padding = abs(max_metric) * 0.1  # 10% of the value
+                            if padding == 0:  # Handle case where all values are zero
+                                padding = 0.1
+                        else:
+                            padding = (max_metric - min_metric) * 0.1  # 10% padding
+                        
+                        # If optimality gap, make sure lower bound is not negative
+                        if 'gap' in metric_name.lower():
+                            min_bound = max(0, min_metric - padding)
+                            axes[i+1].set_ylim([min_bound, max_metric + padding])
+                        else:
+                            axes[i+1].set_ylim([min_metric - padding, max_metric + padding])
         
         plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path)
             
-        plt.show()
+        plt.close()
         
     def load_best_model(self):
         """Load the best model based on validation loss."""
@@ -363,4 +395,234 @@ def optimality_gap_metric(output, target, cost_coeffs):
     # Compute relative optimality gap
     gap = (pred_cost - true_cost) / (true_cost + 1e-8)
     
-    return torch.mean(gap) 
+    return torch.mean(gap)
+
+class PhysicsInformedMSELoss(torch.nn.Module):
+    """
+    Physics-informed MSE loss for OPF problems.
+    
+    This loss function combines standard MSE with penalty terms for physics constraints:
+    1. Power balance constraints
+    2. Generation limit violations
+    3. Voltage magnitude constraints
+    
+    Args:
+        case_data: PyPOWER case data dictionary
+        lambda_power: Weight for power balance penalty
+        lambda_gen: Weight for generation limit penalty
+        lambda_voltage: Weight for voltage magnitude penalty
+        epsilon: Small value for numerical stability
+    """
+    def __init__(self, case_data, lambda_power=1.0, lambda_gen=1.0, 
+                lambda_voltage=1.0, epsilon=1e-8):
+        super(PhysicsInformedMSELoss, self).__init__()
+        self.case_data = case_data
+        self.lambda_power = lambda_power
+        self.lambda_gen = lambda_gen
+        self.lambda_voltage = lambda_voltage
+        self.epsilon = epsilon
+        
+        # Base MSE loss
+        self.mse = torch.nn.MSELoss()
+        
+        # Store system parameters
+        self.baseMVA = case_data['baseMVA']
+        
+        # Extract generator limits
+        self.pg_min = torch.tensor(case_data['gen'][:, 9] / self.baseMVA, dtype=torch.float32)
+        self.pg_max = torch.tensor(case_data['gen'][:, 8] / self.baseMVA, dtype=torch.float32)
+        
+        # Extract voltage limits
+        self.vm_min = torch.tensor(case_data['bus'][:, 12], dtype=torch.float32)
+        self.vm_max = torch.tensor(case_data['bus'][:, 11], dtype=torch.float32)
+        
+        # Generator and bus indices for mapping
+        self.gen_bus = case_data['gen'][:, 0].astype(int)
+        
+    def forward(self, pred, target):
+        """
+        Compute physics-informed loss.
+        
+        Args:
+            pred: Predicted values [batch_size, n_outputs]
+            target: Target values [batch_size, n_outputs]
+            
+        Returns:
+            Total loss combining MSE and physics penalties
+        """
+        # Base MSE loss
+        mse_loss = self.mse(pred, target)
+        
+        # Number of generators and buses
+        n_gen = len(self.pg_min)
+        n_bus = len(self.vm_min)
+        
+        # Initialize penalty terms
+        gen_penalty = 0.0
+        voltage_penalty = 0.0
+        
+        # Extract generator outputs (assuming first n_gen elements are pg)
+        if pred.shape[1] >= n_gen:
+            pred_pg = pred[:, :n_gen]
+            
+            # Generator limit violations penalty
+            gen_min_violation = torch.nn.functional.relu(self.pg_min - pred_pg)
+            gen_max_violation = torch.nn.functional.relu(pred_pg - self.pg_max)
+            gen_penalty = torch.mean(gen_min_violation + gen_max_violation)
+        
+        # Extract voltage magnitude outputs (assuming they're after generator outputs)
+        vm_start = 2 * n_gen  # After pg and qg
+        if pred.shape[1] >= vm_start + n_bus:
+            pred_vm = pred[:, vm_start:vm_start+n_bus]
+            
+            # Voltage magnitude violations penalty
+            vm_min_violation = torch.nn.functional.relu(self.vm_min - pred_vm)
+            vm_max_violation = torch.nn.functional.relu(pred_vm - self.vm_max)
+            voltage_penalty = torch.mean(vm_min_violation + vm_max_violation)
+        
+        # Combine losses with weighted penalties
+        total_loss = mse_loss + \
+                    self.lambda_gen * gen_penalty + \
+                    self.lambda_voltage * voltage_penalty
+        
+        return total_loss
+
+class RobustLoss(torch.nn.Module):
+    """
+    Robust loss function for OPF problems with outliers and numerical instability.
+    
+    Combines aspects of Huber loss, adaptive scaling, and normalization to handle
+    the extreme values and numerical challenges in OPF problems.
+    
+    Args:
+        beta: Threshold for switching between MSE and MAE (Huber parameter)
+        epsilon: Small value for numerical stability
+        reduction: Reduction method ('mean', 'sum', or 'none')
+    """
+    def __init__(self, beta=1.0, epsilon=1e-8, reduction='mean'):
+        super(RobustLoss, self).__init__()
+        self.beta = beta
+        self.epsilon = epsilon
+        self.reduction = reduction
+    
+    def forward(self, pred, target):
+        """
+        Compute robust loss.
+        
+        Args:
+            pred: Predicted values
+            target: Target values
+            
+        Returns:
+            Loss value
+        """
+        # Scale inputs to similar ranges to avoid numerical issues
+        # We'll use per-feature scaling based on the target values
+        target_max = torch.max(torch.abs(target), dim=0, keepdim=True)[0]
+        scale = torch.clamp(target_max, min=self.epsilon)
+        
+        # Scale both prediction and target
+        pred_scaled = pred / scale
+        target_scaled = target / scale
+        
+        # Compute absolute error
+        abs_error = torch.abs(pred_scaled - target_scaled)
+        
+        # Apply Huber-like loss function
+        quadratic_mask = abs_error <= self.beta
+        linear_mask = ~quadratic_mask
+        
+        # Compute loss components
+        quadratic_loss = 0.5 * abs_error[quadratic_mask] ** 2
+        linear_loss = self.beta * (abs_error[linear_mask] - 0.5 * self.beta)
+        
+        # Combine loss components
+        losses = torch.zeros_like(abs_error)
+        losses[quadratic_mask] = quadratic_loss
+        losses[linear_mask] = linear_loss
+        
+        # Apply reduction
+        if self.reduction == 'none':
+            return losses
+        elif self.reduction == 'sum':
+            return torch.sum(losses)
+        else:  # 'mean'
+            return torch.mean(losses)
+
+class OptimalityGapLoss(torch.nn.Module):
+    """
+    Loss function based on the optimality gap between predicted and true solutions.
+    
+    This is particularly useful for warm-starting, where the goal is to minimize
+    the difference in objective function value rather than point-wise errors.
+    
+    Args:
+        case_data: PyPOWER case data dictionary
+        alpha: Weight for MSE component (0-1)
+        beta: Weight for optimality gap component (1-alpha)
+    """
+    def __init__(self, case_data, alpha=0.2, beta=0.8):
+        super(OptimalityGapLoss, self).__init__()
+        self.case_data = case_data
+        self.alpha = alpha
+        self.beta = beta
+        
+        # Base MSE loss
+        self.mse = torch.nn.MSELoss()
+        
+        # Extract cost coefficients for generators
+        # Assuming quadratic cost function: a*P^2 + b*P + c
+        self.cost_a = torch.tensor([coef[4] for coef in case_data['gencost']], 
+                                  dtype=torch.float32)
+        self.cost_b = torch.tensor([coef[5] for coef in case_data['gencost']], 
+                                  dtype=torch.float32)
+        self.cost_c = torch.tensor([coef[6] for coef in case_data['gencost']], 
+                                  dtype=torch.float32)
+    
+    def calculate_generation_cost(self, pg):
+        """Calculate the generation cost for given active power outputs."""
+        # Ensure pg has right shape
+        if len(pg.shape) == 1:
+            pg = pg.unsqueeze(0)
+            
+        # Calculate quadratic cost
+        cost = torch.zeros(pg.shape[0], device=pg.device)
+        
+        for i in range(min(pg.shape[1], len(self.cost_a))):
+            cost += self.cost_a[i] * pg[:, i]**2 + self.cost_b[i] * pg[:, i] + self.cost_c[i]
+            
+        return cost
+    
+    def forward(self, pred, target):
+        """
+        Compute loss based on optimality gap.
+        
+        Args:
+            pred: Predicted values [batch_size, n_outputs]
+            target: Target values [batch_size, n_outputs]
+            
+        Returns:
+            Combined loss with MSE and optimality gap components
+        """
+        # Calculate base MSE
+        mse_loss = self.mse(pred, target)
+        
+        # Calculate optimality gap
+        n_gen = len(self.cost_a)
+        
+        # Extract generator active power outputs
+        pred_pg = pred[:, :n_gen]
+        target_pg = target[:, :n_gen]
+        
+        # Calculate generation costs
+        pred_cost = self.calculate_generation_cost(pred_pg)
+        target_cost = self.calculate_generation_cost(target_pg)
+        
+        # Calculate optimality gap (relative)
+        gap = torch.abs(pred_cost - target_cost) / (torch.abs(target_cost) + 1e-8)
+        gap_loss = torch.mean(gap)
+        
+        # Combined loss
+        total_loss = self.alpha * mse_loss + self.beta * gap_loss
+        
+        return total_loss 

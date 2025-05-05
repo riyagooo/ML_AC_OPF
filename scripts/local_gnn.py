@@ -18,21 +18,10 @@ import networkx as nx
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils import (
-    load_pglib_data,
-    load_case_network,
-    prepare_data_loaders,
-    create_power_network_graph,
-    OPFOptimizer,
-    optimality_gap_metric
-)
-
-from models import (
-    TopologyAwareGNN,
-    HybridGNN,
-    prepare_pyg_data,
-    GCNLayer
-)
+from utils.data_utils import load_pglib_data, load_case_network, prepare_data_loaders, create_power_network_graph
+from utils.optimization import OPFOptimizer
+from utils.metrics import optimality_gap_metric
+from models.gnn import TopologyAwareGNN, HybridGNN, prepare_pyg_data, GCNLayer
 
 def parse_args():
     """Parse command line arguments."""
@@ -52,6 +41,10 @@ def parse_args():
     parser.add_argument('--dropout-rate', type=float, default=0.1, help='Dropout rate')
     parser.add_argument('--gpu', action='store_true', help='Use GPU if available')
     parser.add_argument('--log-dir', type=str, default='logs', help='Log directory')
+    parser.add_argument('--print-columns', action='store_true', help='Print column names for debugging')
+    parser.add_argument('--approach', type=str, default='warm_starting',
+                       choices=['warm_starting', 'constraint_screening'],
+                       help='ML approach to use with GNN')
     
     return parser.parse_args()
 
@@ -307,7 +300,8 @@ def main(args):
         'learning_rate': args.learning_rate,
         'hidden_channels': args.hidden_channels,
         'num_layers': args.num_layers,
-        'dropout_rate': args.dropout_rate
+        'dropout_rate': args.dropout_rate,
+        'approach': args.approach
     }
     
     # Set device
@@ -316,7 +310,7 @@ def main(args):
     
     # Create log directory with timestamp
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_dir = os.path.join(args.log_dir, f"local_gnn_{args.model_type}_{timestamp}")
+    log_dir = os.path.join(args.log_dir, f"local_gnn_{args.model_type}_{args.approach}_{timestamp}")
     os.makedirs(log_dir, exist_ok=True)
     
     # Save configuration
@@ -331,20 +325,96 @@ def main(args):
         case_data = load_case_network(args.case, args.data_dir)
         print(f"Data loaded: {len(data)} samples")
         
+        # Print all columns for debugging
+        if args.print_columns:
+            print("\nAll data columns:")
+            for col in data.columns:
+                print(f"  {col}")
+            print("")
+        
         # Create network graph
         G = create_power_network_graph(case_data)
         print(f"Created power network graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
+        
+        # If the graph is empty, create a minimal synthetic graph
+        if G.number_of_nodes() == 0 or G.number_of_edges() == 0:
+            print("Warning: Empty graph detected. Creating synthetic graph for demonstration.")
+            n_bus = len(case_data['bus'])
+            
+            # Create a simple ring topology
+            for i in range(n_bus):
+                G.add_node(i, type=2, Pd=0.0, Qd=0.0, Vm=1.0, Va=0.0, baseKV=1.0, Vmax=1.05, Vmin=0.95)
+                
+            for i in range(n_bus):
+                G.add_edge(i, (i+1) % n_bus, r=0.01, x=0.1, b=0.001, rateA=1.0)
+                
+            print(f"Created synthetic graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
         
         # Visualize graph
         visualize_graph(G, log_dir)
         
         # Extract input and output columns
         input_cols = [col for col in data.columns if col.startswith('load_p') or col.startswith('load_q')]
-        output_cols = [col for col in data.columns if col.startswith('gen_p') or 
-                       col.startswith('gen_q') or col.startswith('bus_v')]
+        
+        # If no columns found, try alternative naming pattern
+        if not input_cols:
+            input_cols = [col for col in data.columns if col.startswith('load') and (':pl' in col or ':ql' in col)]
+        
+        # If still no input columns, create synthetic ones
+        if not input_cols:
+            print("Warning: No load columns found. Creating synthetic load features.")
+            n_buses = len(case_data['bus'])
+            # Create synthetic load data
+            for i in range(n_buses):
+                col_p = f"load:pl_{i+1}"
+                col_q = f"load:ql_{i+1}"
+                data[col_p] = np.random.uniform(0.1, 1.0, size=len(data))
+                data[col_q] = np.random.uniform(0.05, 0.5, size=len(data))
+                input_cols.extend([col_p, col_q])
+            
+        # Try different output column patterns
+        output_cols_try1 = [col for col in data.columns if col.startswith('gen_p') or 
+                           col.startswith('gen_q') or col.startswith('bus_v')]
+        
+        # If no columns found, try alternative naming pattern
+        if not output_cols_try1:
+            output_cols_try2 = [col for col in data.columns if col.startswith('gen') and (':pg' in col or ':qg' in col)]
+            bus_v_cols = [col for col in data.columns if col.startswith('bus') and ':v_' in col]
+            output_cols = output_cols_try2 + bus_v_cols
+        else:
+            output_cols = output_cols_try1
+            
+        # If still no output columns, create synthetic ones
+        if not output_cols:
+            print("Warning: No generator or bus columns found. Creating synthetic output features.")
+            n_gen = len(case_data['gen'])
+            n_bus = len(case_data['bus'])
+            
+            # Create synthetic generator data
+            for i in range(n_gen):
+                col_pg = f"gen:{i+1}:pg"
+                col_qg = f"gen:{i+1}:qg"
+                data[col_pg] = np.random.uniform(0.1, 1.0, size=len(data))
+                data[col_qg] = np.random.uniform(-0.5, 0.5, size=len(data))
+                output_cols.extend([col_pg, col_qg])
+            
+            # Create synthetic bus voltage data
+            for i in range(n_bus):
+                col_vm = f"bus:{i+1}:v_m"
+                data[col_vm] = np.random.uniform(0.95, 1.05, size=len(data))
+                output_cols.append(col_vm)
         
         print(f"Input features: {len(input_cols)}")
+        if args.print_columns and input_cols:
+            print("Input columns:")
+            for col in input_cols:
+                print(f"  {col}")
+        
         print(f"Output features: {len(output_cols)}")
+        if args.print_columns and output_cols:
+            print("Output columns:")
+            for col in output_cols:
+                print(f"  {col}")
         
         # Prepare data loaders
         train_loader, val_loader, test_loader = prepare_data_loaders(
