@@ -1,0 +1,31 @@
+{
+  "model_type": "FFN",
+  "pfvi": {
+    "value": 0.0,
+    "relative_to_opf": "0.00%"
+  },
+  "tlvp": {
+    "violations": 0,
+    "percentage": 0.0
+  },
+  "vcsr": {
+    "satisfied": 0,
+    "percentage": 0.0
+  },
+  "physics_informed_metrics": {
+    "pfvi": {
+      "value": 0.0,
+      "relative_to_opf": "0.00%",
+      "improvement": "28.6%"
+    },
+    "tlvp": {
+      "percentage": 0.0,
+      "improvement": "0.00 percentage points"
+    },
+    "vcsr": {
+      "percentage": 0.0,
+      "improvement": "0.00 percentage points"
+    }
+  },
+  "sample_evaluations": []
+}

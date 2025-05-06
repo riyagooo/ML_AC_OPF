@@ -1,0 +1,112 @@
+
+    <html>
+    <head>
+        <title>Model Comparison: GNN vs FFN</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            h1, h2 { color: #2c3e50; }
+            table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+            th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background-color: #f2f2f2; }
+            tr:hover { background-color: #f5f5f5; }
+            .container { display: flex; flex-wrap: wrap; justify-content: space-between; }
+            .image-container { width: 48%; margin-bottom: 20px; }
+            img { max-width: 100%; height: auto; }
+            .highlight { font-weight: bold; color: #27ae60; }
+            .footer { margin-top: 30px; color: #7f8c8d; font-size: 0.9em; }
+        </style>
+    </head>
+    <body>
+        <h1>Model Comparison: Graph Neural Network vs Feedforward Neural Network</h1>
+        <p>Comparison of model performance metrics for AC-OPF prediction task on IEEE39 dataset.</p>
+        
+        <h2>Summary Metrics</h2>
+        <table>
+            <tr>
+                <th>Metric</th>
+                <th>GNN</th>
+                <th>FFN</th>
+                <th>Difference (FFN-GNN)</th>
+            </tr>
+            <tr>
+                <td>Test Loss</td>
+                <td>0.844191</td>
+                <td>0.838223</td>
+                <td>-0.005968</td>
+            </tr>
+            <tr>
+                <td>MSE</td>
+                <td>0.844319</td>
+                <td>0.838184</td>
+                <td>-0.006134</td>
+            </tr>
+            <tr>
+                <td>MAE</td>
+                <td>0.730207</td>
+                <td>0.727062</td>
+                <td>-0.003145</td>
+            </tr>
+            <tr>
+                <td>Average R²</td>
+                <td>0.166351</td>
+                <td>0.172626</td>
+                <td class="highlight">
+                    0.006275
+                </td>
+            </tr>
+        </table>
+        
+        <h2>Visualization</h2>
+        <div class="container">
+            <div class="image-container">
+                <h3>Overall Metrics</h3>
+                <img src="metrics_comparison.png" alt="Metrics Comparison">
+            </div>
+            <div class="image-container">
+                <h3>R² by Output Dimension</h3>
+                <img src="r2_comparison.png" alt="R² Comparison">
+            </div>
+        </div>
+        
+        <h2>Training Configuration</h2>
+        <table>
+            <tr>
+                <th>Parameter</th>
+                <th>Value</th>
+            </tr>
+            <tr>
+                <td>Epochs</td>
+                <td>20</td>
+            </tr>
+            <tr>
+                <td>Batch Size</td>
+                <td>128</td>
+            </tr>
+            <tr>
+                <td>Hidden Dimension</td>
+                <td>64</td>
+            </tr>
+            <tr>
+                <td>Number of Layers</td>
+                <td>2</td>
+            </tr>
+            <tr>
+                <td>Dropout Rate</td>
+                <td>0.2</td>
+            </tr>
+            <tr>
+                <td>Learning Rate</td>
+                <td>0.001</td>
+            </tr>
+            <tr>
+                <td>Sample Size</td>
+                <td>5,000</td>
+            </tr>
+        </table>
+        
+        <div class="footer">
+            <p>Generated on 2025-05-06 11:36:42</p>
+        </div>
+    </body>
+    </html>
+    

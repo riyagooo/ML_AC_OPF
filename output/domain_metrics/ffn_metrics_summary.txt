@@ -1,0 +1,16 @@
+Domain-Specific Metrics Evaluation Summary for FFN
+===============================================
+
+IEEE 39-Bus System Balanced FFN Model Evaluation
+
+Balanced FFN Model:
+  Power Flow Violation Index (PFVI): 0.0000 (0.00%)
+  Thermal Limit Violation Percentage (TLVP): 0.00%
+  Voltage Constraint Satisfaction Rate (VCSR): 0.00%
+
+  With Physics-Informed Loss:
+    PFVI: 0.0000 (Improvement: 28.6%)
+    TLVP: 0.00% (Improvement: 0.00 percentage points)
+    VCSR: 0.00% (Improvement: 0.00 percentage points)
+
+Sample-by-Sample Evaluations (First 5 samples):

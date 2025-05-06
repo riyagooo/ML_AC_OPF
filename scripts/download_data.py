@@ -12,9 +12,9 @@ from pathlib import Path
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Download PGLib-OPF dataset')
-    parser.add_argument('--case', type=str, default='case118', 
+    parser.add_argument('--case', type=str, default='case30', 
                         choices=['case5', 'case14', 'case30', 'case57', 'case118', 'case300'],
-                        help='Case name (default: case118)')
+                        help='Case name (default: case30)')
     parser.add_argument('--data-dir', type=str, default='data', 
                         help='Data directory (default: data)')
     parser.add_argument('--force', action='store_true',

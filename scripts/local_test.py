@@ -34,7 +34,7 @@ from models import (
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='ML-OPF Local Test')
-    parser.add_argument('--case', type=str, default='case118', help='Case name (default: case118)')
+    parser.add_argument('--case', type=str, default='case30', help='Case name (default: case30)')
     parser.add_argument('--data-dir', type=str, default='data', help='Data directory')
     parser.add_argument('--model-type', type=str, default='feedforward', 
                         choices=['feedforward', 'warm_start', 'constraint_screening'],

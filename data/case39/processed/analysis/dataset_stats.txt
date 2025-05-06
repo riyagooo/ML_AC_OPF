@@ -1,0 +1,11 @@
+Dataset shape: (100, 25)
+Total samples: 100
+Feasible samples: 34 (34.00%)
+Infeasible samples: 66 (66.00%)
+
+Binding Constraints Distribution:
+PG: 37 samples (37.00%)
+QG: 100 samples (100.00%)
+VM: 98 samples (98.00%)
+SF: 100 samples (100.00%)
+SSS: 93 samples (93.00%)

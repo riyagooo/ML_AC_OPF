@@ -232,4 +232,105 @@ def load_and_prepare_data(config: DataConfig, batch_size: int = 32) -> Dict[str,
         'cv_loaders': cv_loaders,
         'test_loader': test_loader,
         'normalizer': normalizer
-    } 
+    }
+
+def noise_injection(inputs, noise_level=0.05, noise_type='gaussian'):
+    """
+    Add noise to input data for testing model robustness.
+    
+    Args:
+        inputs: Input data (numpy array or torch tensor)
+        noise_level: Level of noise to inject (as a fraction of data standard deviation)
+        noise_type: Type of noise ('gaussian', 'uniform', 'salt_pepper')
+            
+    Returns:
+        Inputs with added noise
+    """
+    if isinstance(inputs, torch.Tensor):
+        if noise_type == 'gaussian':
+            noise = torch.randn_like(inputs) * torch.std(inputs) * noise_level
+        elif noise_type == 'uniform':
+            noise = (torch.rand_like(inputs) * 2 - 1) * torch.std(inputs) * noise_level
+        elif noise_type == 'salt_pepper':
+            mask = torch.rand_like(inputs) < noise_level
+            noise = torch.zeros_like(inputs)
+            noise[mask] = inputs.max() - inputs.min()
+            # Randomly choose whether to add or subtract the noise
+            sign_mask = torch.rand_like(inputs) < 0.5
+            noise[sign_mask] = -noise[sign_mask]
+        else:
+            raise ValueError(f"Unknown noise type: {noise_type}")
+        
+        return inputs + noise
+    else:
+        # Numpy implementation
+        if noise_type == 'gaussian':
+            noise = np.random.normal(0, 1, inputs.shape) * np.std(inputs) * noise_level
+        elif noise_type == 'uniform':
+            noise = (np.random.rand(*inputs.shape) * 2 - 1) * np.std(inputs) * noise_level
+        elif noise_type == 'salt_pepper':
+            mask = np.random.rand(*inputs.shape) < noise_level
+            noise = np.zeros_like(inputs)
+            noise[mask] = inputs.max() - inputs.min()
+            # Randomly choose whether to add or subtract the noise
+            sign_mask = np.random.rand(*inputs.shape) < 0.5
+            noise[sign_mask] = -noise[sign_mask]
+        else:
+            raise ValueError(f"Unknown noise type: {noise_type}")
+        
+        return inputs + noise
+
+def adversarial_perturbation(model, inputs, targets, epsilon=0.01, steps=3):
+    """
+    Generate adversarial perturbations for testing model robustness.
+    Uses Fast Gradient Sign Method (FGSM) or its iterative variant.
+    
+    Args:
+        model: PyTorch model
+        inputs: Input data
+        targets: Target outputs
+        epsilon: Maximum perturbation size
+        steps: Number of iterations (1 for FGSM, >1 for iterative FGSM)
+            
+    Returns:
+        Perturbed inputs
+    """
+    if not isinstance(inputs, torch.Tensor):
+        inputs = torch.tensor(inputs, dtype=torch.float32)
+    
+    if not isinstance(targets, torch.Tensor):
+        targets = torch.tensor(targets, dtype=torch.float32)
+    
+    # Create a copy of inputs that requires gradient
+    x_adv = inputs.clone().detach().requires_grad_(True)
+    
+    # Loss function
+    criterion = torch.nn.MSELoss()
+    
+    # Iterative FGSM
+    for _ in range(steps):
+        # Forward pass
+        outputs = model(x_adv)
+        
+        # Calculate loss
+        loss = criterion(outputs, targets)
+        
+        # Backward pass
+        model.zero_grad()
+        loss.backward()
+        
+        # Update adversarial example
+        with torch.no_grad():
+            # Get sign of gradient
+            grad_sign = x_adv.grad.sign()
+            
+            # Add perturbation
+            x_adv = x_adv + (epsilon / steps) * grad_sign
+            
+            # Ensure the perturbation is within bounds
+            x_adv = torch.clamp(x_adv, inputs - epsilon, inputs + epsilon)
+            
+            # Prepare for next iteration
+            x_adv.requires_grad_(True)
+    
+    return x_adv.detach() 

@@ -2456,3 +2456,128 @@ def create_model_comparison_dashboard(
     # Save to HTML file
     fig.write_html(output_file)
     print(f"Dashboard saved to {output_file}")
+
+def calculate_physics_aware_r2(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    case_data: Dict[str, Any],
+    denormalized: bool = True,
+    normalizer: Optional[DataNormalizer] = None,
+    constraint_weight: float = 0.3,
+    output_breakdown: bool = False
+) -> Union[float, Dict[str, float]]:
+    """
+    Calculate a physics-aware R² metric that considers both prediction accuracy and constraint satisfaction.
+    
+    This metric enhances the standard R² by incorporating the physical feasibility of solutions, which is
+    particularly important for AC-OPF problems where constraint satisfaction is critical.
+    
+    Args:
+        y_true: True values (optimal OPF solutions)
+        y_pred: Predicted values from ML model
+        case_data: Power system case data dictionary
+        denormalized: Whether input data is already denormalized
+        normalizer: Normalizer to use if data needs to be denormalized
+        constraint_weight: Weight given to constraint satisfaction (0-1)
+        output_breakdown: Whether to return a detailed breakdown of metrics
+        
+    Returns:
+        Physics-aware R² score or dictionary with detailed metrics
+    """
+    # Denormalize if needed
+    if not denormalized and normalizer is not None:
+        if isinstance(y_true, torch.Tensor):
+            y_true = y_true.cpu().numpy()
+        if isinstance(y_pred, torch.Tensor):
+            y_pred = y_pred.cpu().numpy()
+            
+        y_true = normalizer.inverse_transform_outputs(y_true)
+        y_pred = normalizer.inverse_transform_outputs(y_pred)
+    
+    # Extract system dimensions
+    n_gen = len(case_data['gen'])
+    n_bus = len(case_data['bus'])
+    n_branch = len(case_data['branch'])
+    
+    # Standard R² calculation (prediction accuracy component)
+    standard_r2 = r2_score(y_true, y_pred)
+    
+    # For negative R², clip to avoid extreme values that skew the physics-aware metric
+    standard_r2_clipped = max(-1.0, standard_r2)
+    
+    # Calculate constraint violation penalties
+    # 1. Generator limits
+    p_gen_pred = y_pred[:, :n_gen]
+    p_gen_min = case_data['gen'][:, 9] / case_data['baseMVA']
+    p_gen_max = case_data['gen'][:, 8] / case_data['baseMVA']
+    
+    p_min_violation = np.maximum(0, p_gen_min - p_gen_pred)
+    p_max_violation = np.maximum(0, p_gen_pred - p_gen_max)
+    
+    # 2. Voltage limits if available
+    v_penalties = 0.0
+    if y_pred.shape[1] >= 2*n_gen + n_bus:  # If voltage magnitudes are predicted
+        v_mag_pred = y_pred[:, 2*n_gen:2*n_gen+n_bus]
+        v_min = case_data['bus'][:, 12]
+        v_max = case_data['bus'][:, 11]
+        
+        v_min_violation = np.maximum(0, v_min - v_mag_pred)
+        v_max_violation = np.maximum(0, v_mag_pred - v_max)
+        
+        v_penalties = np.mean(v_min_violation) + np.mean(v_max_violation)
+    
+    # Combine generator constraint violations
+    gen_penalties = np.mean(p_min_violation) + np.mean(p_max_violation)
+    
+    # Reactive power penalties if available
+    q_penalties = 0.0
+    if y_pred.shape[1] >= 2*n_gen:  # If reactive power is predicted
+        q_gen_pred = y_pred[:, n_gen:2*n_gen]
+        q_gen_min = case_data['gen'][:, 4] / case_data['baseMVA']
+        q_gen_max = case_data['gen'][:, 3] / case_data['baseMVA']
+        
+        q_min_violation = np.maximum(0, q_gen_min - q_gen_pred)
+        q_max_violation = np.maximum(0, q_gen_pred - q_gen_max)
+        
+        q_penalties = np.mean(q_min_violation) + np.mean(q_max_violation)
+    
+    # Calculate generation cost difference
+    # Assuming quadratic cost function: a*P^2 + b*P + c
+    pred_cost = 0.0
+    true_cost = 0.0
+    
+    p_gen_true = y_true[:, :n_gen]
+    
+    for i in range(n_gen):
+        a = case_data['gencost'][i][4]
+        b = case_data['gencost'][i][5]
+        c = case_data['gencost'][i][6]
+        
+        pred_cost += np.mean(a * p_gen_pred[:, i]**2 + b * p_gen_pred[:, i] + c)
+        true_cost += np.mean(a * p_gen_true[:, i]**2 + b * p_gen_true[:, i] + c)
+    
+    # Calculate relative cost optimality gap
+    rel_cost_diff = abs(pred_cost - true_cost) / max(abs(true_cost), 1e-8)
+    
+    # Transform constraint penalties into a [0, 1] score where 1 is best (no violations)
+    # Use an exponential decay function for penalties
+    total_penalties = gen_penalties + q_penalties + v_penalties
+    constraint_satisfaction = np.exp(-5.0 * total_penalties)  # 5.0 is a scaling factor
+    
+    # Combine standard R² and constraint satisfaction
+    # When constraint_satisfaction is 1 (perfect), we get the original R²
+    # As constraint violations increase, the physics-aware R² decreases
+    physics_aware_r2 = (1 - constraint_weight) * standard_r2_clipped + constraint_weight * constraint_satisfaction
+    
+    if output_breakdown:
+        return {
+            'standard_r2': standard_r2,
+            'physics_aware_r2': physics_aware_r2,
+            'constraint_satisfaction': constraint_satisfaction,
+            'gen_penalties': gen_penalties,
+            'q_penalties': q_penalties,
+            'v_penalties': v_penalties,
+            'rel_cost_diff': rel_cost_diff
+        }
+    else:
+        return physics_aware_r2
